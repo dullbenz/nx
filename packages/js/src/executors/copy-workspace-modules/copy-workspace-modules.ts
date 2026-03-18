@@ -78,12 +78,34 @@ function handleWorkspaceModules(
     const workspaceModuleRoot = workspaceModuleProject.data.root;
     const newWorkspaceModulePath = join(workspaceModulesDir, pkgName);
 
-    // Copy the module
+    // Copy only the module's build output (preferred) and package.json
     mkdirSync(newWorkspaceModulePath, { recursive: true });
-    cpSync(workspaceModuleRoot, newWorkspaceModulePath, {
-      filter: (src) => !src.includes('node_modules'),
-      recursive: true,
-    });
+
+    // Determine module build output directory if available
+    const moduleOutputDir = inferModuleOutputDir(workspaceModuleProject);
+
+    if (moduleOutputDir && existsSync(moduleOutputDir)) {
+      // Copy built files into the package folder
+      cpSync(moduleOutputDir, newWorkspaceModulePath, {
+        filter: (src) => !src.includes('node_modules'),
+        recursive: true,
+      });
+    } else {
+      // Fallback: copy only package.json if no build output found
+      logger.verbose(
+        `No build output found for ${pkgName}, skipping source copy and only copying package.json.`
+      );
+    }
+
+    // Always copy package.json from project root so we can update file: deps
+    const originalPackageJsonPath = join(workspaceModuleRoot, 'package.json');
+    if (existsSync(originalPackageJsonPath)) {
+      try {
+        cpSync(originalPackageJsonPath, join(newWorkspaceModulePath, 'package.json'));
+      } catch (e) {
+        logger.warn(`Failed to copy package.json for ${pkgName}: ${e?.message}`);
+      }
+    }
 
     logger.verbose(`Copied ${pkgName} successfully.`);
 
@@ -130,6 +152,46 @@ function handleWorkspaceModules(
   for (const [pkgName] of Object.entries(packageJson.dependencies)) {
     processModule(pkgName);
   }
+}
+
+function inferModuleOutputDir(workspaceModuleProject: { data: any } | any) {
+  const project = workspaceModuleProject.data ?? workspaceModuleProject;
+
+  const buildTarget = project.targets?.build;
+
+  let maybeOutputPath:
+    | string
+    | undefined =
+    buildTarget?.outputs?.[0] ?? buildTarget?.options?.outputPath ??
+    buildTarget?.options?.outputDir;
+
+  if (maybeOutputPath) {
+    maybeOutputPath = interpolate(maybeOutputPath, {
+      workspaceRoot,
+      projectRoot: project.root,
+      projectName: project.name,
+      options: {
+        ...(buildTarget?.options ?? {}),
+      },
+    });
+
+    const outputDir = normalizeOutputPath(maybeOutputPath);
+    if (existsSync(outputDir)) {
+      return outputDir;
+    }
+  }
+
+  // Common fallback locations
+  const candidate1 = join(workspaceRoot, project.root, 'dist');
+  if (existsSync(candidate1)) return candidate1;
+
+  const candidate2 = join(workspaceRoot, 'dist', project.root);
+  if (existsSync(candidate2)) return candidate2;
+
+  const candidate3 = join(workspaceRoot, 'dist', project.name);
+  if (existsSync(candidate3)) return candidate3;
+
+  return undefined;
 }
 
 function createWorkspaceModules(outputDirectory: string) {
