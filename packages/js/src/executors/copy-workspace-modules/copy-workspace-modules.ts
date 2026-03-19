@@ -15,7 +15,7 @@ import {
   readFileSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, relative, sep } from 'path';
+import { dirname, join, relative, sep, basename } from 'path';
 import { lstatSync } from 'fs';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { getWorkspacePackagesFromGraph } from 'nx/src/plugins/js/utils/get-workspace-packages-from-graph';
@@ -85,8 +85,12 @@ function handleWorkspaceModules(
     const moduleOutputDir = inferModuleOutputDir(workspaceModuleProject);
 
     if (moduleOutputDir && existsSync(moduleOutputDir)) {
-      // Copy built files into the package folder
-      cpSync(moduleOutputDir, newWorkspaceModulePath, {
+      // Preserve the output directory name (e.g., `dist`) when copying so
+      // the package structure remains: <pkg>/dist/...
+      const outputBasename = basename(moduleOutputDir);
+      const targetOutputPath = join(newWorkspaceModulePath, outputBasename);
+      mkdirSync(targetOutputPath, { recursive: true });
+      cpSync(moduleOutputDir, targetOutputPath, {
         filter: (src) => !src.includes('node_modules'),
         recursive: true,
       });
